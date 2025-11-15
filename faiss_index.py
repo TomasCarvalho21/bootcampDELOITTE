@@ -172,7 +172,7 @@ class FAISSIndex():
         # Process each chunk: embed and store
         for chunk in text_chunks:
             # Generate embedding vector for this chunk (API call to OpenAI)
-            embedding = self.embeddings(chunk)
+            embedding = self.embeddings.get_embeddings(chunk)
             
             # Convert to numpy array with float32 dtype (FAISS requirement)
             # Shape is (1, dimension) because FAISS add() expects a 2D array
@@ -219,7 +219,7 @@ class FAISSIndex():
               instead of just chunks. This would enable the chatbot to cite sources.
         """
         # Generate embedding for the query using the same embedding model
-        query_embedding = self.embeddings(query)
+        query_embedding = self.embeddings.get_embeddings(query)
         
         # Convert to numpy array with float32 dtype for FAISS
         # Shape is (1, dimension) for a single query vector
