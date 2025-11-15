@@ -1,4 +1,5 @@
 """
+teste
 EcoGuide Chatbot - Main Application Entry Point
 
 This is the main script for running the RAG-based climate change chatbot for the
