@@ -1,0 +1,100 @@
+import os
+from src.services.vectorial_db.faiss_index import FAISSIndex
+from src.services.models.embeddings import Embeddings
+from llama_index.core import SimpleDirectoryReader
+from dotenv import load_dotenv
+
+# O nome da pasta 'data' na raiz do projeto
+DATA_FOLDER = 'data'
+
+def ingest_files_data_folder(index: FAISSIndex):
+    """
+    Ingere todos os ficheiros na pasta 'data' para o índice FAISS,
+    com logs de debug detalhados.
+    """
+    
+    # --- INÍCIO DEBUGGING ---
+    cwd = os.getcwd()
+    print(f"\n[DEBUG] O script está a ser executado a partir de: {cwd}")
+    
+    data_path = os.path.abspath(DATA_FOLDER)
+    print(f"[DEBUG] A procurar pela pasta 'data' em: {data_path}")
+
+    # Verificação 1: A pasta 'data' existe?
+    if not os.path.exists(data_path):
+        print(f"[ERRO] A pasta 'data' NÃO FOI ENCONTRADA em {data_path}")
+        print("Por favor, crie a pasta 'data' na raiz do projeto e adicione os seus ficheiros (.pdf, .html, .txt).")
+        return # Sair da função
+
+    # Verificação 2: A pasta 'data' está vazia?
+    try:
+        files_in_data = os.listdir(data_path)
+        if not files_in_data:
+            print(f"[ERRO] A pasta 'data' foi encontrada em {data_path}, mas está VAZIA.")
+            return # Sair da função
+        print(f"[DEBUG] Ficheiros encontrados na pasta 'data': {files_in_data}")
+    except Exception as e:
+        print(f"[ERRO] Não foi possível ler o conteúdo da pasta 'data': {e}")
+        return
+    # --- FIM DEBUGGING ---
+
+    # Excluir CSVs (para produtos)
+    exclude_patterns = ["*.csv"] 
+    print(f"A carregar documentos de '{data_path}'...")
+    
+    loader = SimpleDirectoryReader(
+        input_dir=data_path, # Usar o caminho absoluto
+        recursive=True,
+        exclude=exclude_patterns
+    )
+    
+    try:
+        # Tentar carregar os dados
+        documents = loader.load_data()
+    except Exception as e:
+        # Erro comum: falta de dependências (ex: pypdf)
+        print(f"[ERRO] Falha ao carregar documentos com o Llama-index: {e}")
+        print("Verifique se tem as dependências necessárias instaladas (ex: pip install pypdf beautifulsoup4)")
+        return
+
+    # Verificação 3: O Llama-index carregou alguma coisa?
+    if not documents:
+        print("[ERRO] O Llama-index não carregou nenhuns documentos.")
+        print("Isto pode acontecer se a pasta 'data' contiver apenas ficheiros excluídos (como .csv) ou ficheiros que o Llama-index não consegue ler.")
+        return
+
+    print(f"\n[SUCESSO] Carregados {len(documents)} documentos (páginas/ficheiros). A iniciar ingestão...")
+
+    # Iterar sobre cada Documento (página)
+    for doc in documents:
+        if not doc.text.strip():
+            continue
+            
+        print(f"A ingerir chunk de: {doc.metadata.get('file_name')} (Página: {doc.metadata.get('page_label', 'N/A')})")
+        
+        index.ingest_text(text=doc.text, metadata=doc.metadata)
+    
+    # --- DEBUGGING FINAL ---
+    total_vectors = index.index.ntotal
+    if total_vectors > 0:
+        print(f"\n[SUCESSO] Ingestão completa. O índice FAISS contém agora {total_vectors} vetores.")
+    else:
+        print("\n[ERRO] A ingestão terminou, mas o índice FAISS continua vazio. Reveja os logs acima.")
+    # --- FIM DEBUGGING ---
+
+
+if __name__ == "__main__":
+    
+    load_dotenv(override=True)
+    
+    print("Initializing embeddings and index...")
+    embeddings = Embeddings()
+    
+    index = FAISSIndex(embeddings=embeddings.get_embeddings, dimension=3072) 
+    
+    print("Starting ingestion...")
+    ingest_files_data_folder(index)
+    
+    print("Saving index to disk...")
+    index.save_index()
+    print("Ingestion complete and index saved.")
