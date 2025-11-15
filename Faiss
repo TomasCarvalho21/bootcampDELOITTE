@@ -1,0 +1,162 @@
+"""
+FAISS Vector Database Index Manager
+(...)
+"""
+
+from faiss import IndexFlatL2, write_index, read_index
+import numpy as np
+import os
+
+from src.ingestion.chunking.token_chunking import text_to_chunks
+
+
+class FAISSIndex():
+    """
+    Manages a FAISS index for storing and retrieving text chunks based on their embeddings.
+    (...)
+    TODO: Add metadata tracking for source attribution (which document each chunk came from) [FEITO]
+    """
+    
+    def __init__(self, dimension: int = 1536, embeddings=None):
+        """
+        Initializes the FAISS index manager with embedding configuration.
+        (...)
+        """
+        if not embeddings:
+            raise ValueError("No embeddings provided.")
+        
+        self.embeddings = embeddings
+        self.dimension = dimension
+        
+        self.index: IndexFlatL2 | None = None
+        self._create_faiss_index()
+        
+        # ALTERAÇÃO: Renomeado de chunks_list para chunks_data_list
+        # Agora armazena dicionários: {'text': str, 'metadata': dict}
+        self.chunks_data_list: list = []
+    
+    def _create_faiss_index(self):
+        """
+        Initializes a new FAISS IndexFlatL2 for exact similarity search.
+        (...)
+        """
+        self.index = IndexFlatL2(self.dimension)
+    
+    # ALTERAÇÃO: A assinatura do método mudou para aceitar metadata
+    def ingest_text(self, text: str | None = None, metadata: dict | None = None, text_chunks: list | None = None) -> bool:
+        """
+        Ingests text into the FAISS index by converting chunks to embeddings and storing them.
+        (...)
+        Args:
+            text (str | None): Raw text to be chunked and ingested.
+            metadata (dict | None): Metadata associated with the raw text (e.g., file_name, page_label).
+            text_chunks (list | None): Pre-chunked text to be ingested directly.
+                                        (Nota: metadata não será associada se usar este)
+        (...)
+        TODO: Add source tracking - store which document each chunk came from [FEITO]
+        """
+        if not (text_chunks or text):
+            raise ValueError("Either text or text_chunks must be provided")
+        
+        # Se texto simples for fornecido, faça o chunking
+        if not text_chunks:
+            text_chunks = text_to_chunks(text)
+        
+        # Se nenhuma metadata for fornecida, use um dicionário vazio
+        if metadata is None:
+            metadata = {}
+            
+        for chunk in text_chunks:
+            embedding = self.embeddings(chunk)
+            embedding_array = np.array([embedding]).astype('float32')
+            
+            self.index.add(embedding_array)
+            
+            # ALTERAÇÃO: Armazene o texto E a metadata
+            self.chunks_data_list.append({
+                'text': chunk,
+                'metadata': metadata
+            })
+        
+        return True
+    
+    def retrieve_chunks(self, query: str, num_chunks: int = 5) -> list[dict]:
+        """
+        Retrieves the most relevant text chunks for a given query using semantic search.
+        (...)
+        """
+        
+        # --- VERIFICAÇÃO 1: O ÍNDICE ESTÁ VAZIO? ---
+        # Se o índice FAISS (self.index.ntotal) não tem vetores, 
+        # não há nada para procurar. Retorna uma lista vazia.
+        if self.index.ntotal == 0:
+            print("Aviso: O índice FAISS está vazio. Não foram recuperados chunks.")
+            return []
+        
+        query_embedding = self.embeddings(query)
+        query_vector = np.array([query_embedding]).astype('float32')
+        
+        # O search pode retornar distâncias (D) e índices (I)
+        _, I = self.index.search(query_vector, num_chunks)
+        
+        # --- VERIFICAÇÃO 2: FILTRAR ÍNDICES INVÁLIDOS ---
+        # Filtra os índices -1 (que o FAISS retorna se não encontrar)
+        # e garante que o índice não é maior que a lista (por segurança)
+        valid_indices = [
+            i for i in I[0] 
+            if i != -1 and i < len(self.chunks_data_list)
+        ]
+        
+        # Retorna os dados usando apenas os índices válidos
+        return [self.chunks_data_list[i] for i in valid_indices]
+        """
+        Retrieves the most relevant text chunks for a given query using semantic search.
+        (...)
+        Returns:
+            list[dict]: Uma lista de dicionários, cada um contendo 'text' e 'metadata'.
+        
+        TODO: Add source citation [FEITO]
+        """
+        query_embedding = self.embeddings(query)
+        query_vector = np.array([query_embedding]).astype('float32')
+        
+        _, I = self.index.search(query_vector, num_chunks)
+        
+        # ALTERAÇÃO: Retorna o dicionário completo (texto + metadata)
+        return [self.chunks_data_list[i] for i in I[0]]
+    
+    def save_index(self, path=r"./faiss_index"):
+        """
+        Persists the FAISS index and chunks to disk for later use.
+        (...)
+        """
+        print(f"Saving index to '{path}' folder...")
+        
+        index_path = os.path.join(path, "index.faiss")
+        chunks_path = os.path.join(path, "chunks.npy")
+        
+        if not os.path.exists(path):
+            os.makedirs(path)
+        
+        write_index(self.index, index_path)
+        
+        # ALTERAÇÃO: Salva a lista de dicionários de metadata
+        np.save(chunks_path, self.chunks_data_list, allow_pickle=True)
+    
+    def load_index(self, path: str = r"./faiss_index"):
+        """
+        Loads a previously saved FAISS index and chunks from disk.
+        (...)
+        """
+        print(f"Loading index from '{path}' folder...")
+        
+        index_path = os.path.join(path, "index.faiss")
+        chunks_path = os.path.join(path, "chunks.npy")
+        
+        if not os.path.exists(path):
+            raise FileNotFoundError("Index not found.")
+        
+        self.index = read_index(index_path)
+        
+        # ALTERAÇÃO: Carrega a lista de dicionários de metadata
+        self.chunks_data_list = np.load(chunks_path, allow_pickle=True).tolist()
